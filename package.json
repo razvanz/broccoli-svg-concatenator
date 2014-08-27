@@ -1,6 +1,6 @@
 {
   "name": "broccoli-svg-concatenator",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A Broccoli tree that concatenates all SVG files in a tree into a hash exported on window.",
   "main": "index.js",
   "scripts": {
