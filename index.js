@@ -1,92 +1,70 @@
-var _ = require('lodash'),
-    Promise = require('bluebird'),
-    fs = require('fs'),
-    readFile = Promise.promisify(fs.readFile),
-    writeFile = Promise.promisify(fs.writeFile),
-    path = require('path'),
-    mkdirp = Promise.promisify(require('mkdirp')),
-    Writer = require('broccoli-writer'),
-    recursiveReaddir = Promise.promisify(require('recursive-readdir'));
+const fs = require('fs')
+const path = require('path')
 
-module.exports = SvgConcatenator;
+const _ = require('lodash')
+const Plugin = require('broccoli-plugin')
+const Promise = require('bluebird')
+const findFiles = Promise.promisify(require('glob'))
+const mkdirp = Promise.promisify(require('mkdirp'))
+const readFile = Promise.promisify(fs.readFile)
+const writeFile = Promise.promisify(fs.writeFile)
 
-SvgConcatenator.prototype = Object.create(Writer.prototype);
-SvgConcatenator.prototype.constructor = SvgConcatenator;
+function SvgConcatenator(inputNodes, options) {
+    if (!(this instanceof SvgConcatenator))
+        return new SvgConcatenator(inputNodes, options)
 
-function SvgConcatenator(inputTree, options) {
-    if (!(this instanceof SvgConcatenator)) {
-        return new SvgConcatenator(inputTree, options);
-    }
-
-    options = _.defaults(options, {
-        name: 'Svg'
-    });
-
-    _.extend(this, options);
-
-    this.inputTree = inputTree;
+    options = _.defaults(options, SvgConcatenator.DEFAULTS)
+    Plugin.call(this, [inputNodes], options)
+    this.options = options
 }
 
-SvgConcatenator.prototype.write = function(readTree, destDir) {
-    var outputFile = path.join(destDir, this.outputFile),
-        name = this.name,
-        srcDir,
-        svgFiles,
-        svgContents = [];
+SvgConcatenator.prototype = Object.create(Plugin.prototype)
+SvgConcatenator.prototype.constructor = SvgConcatenator
 
-    var minifyOptions = {
+SvgConcatenator.prototype.build = function() {
+  var name = this.options.name
+  var inputPath = this.inputPaths[0]
+  var outputPath = path.join(this.outputPath, this.options.outputFile)
+
+  return findFiles(`${inputPath}/**/**.svg`)
+      .then(readSvgFiles)
+      .then(saveSvgs)
+
+  function readSvgFiles(svgFiles) {
+      return Promise.all(
+          svgFiles.map(filePath => readFile(filePath)
+              .then(contents => ({
+                  name: filePath.substring(inputPath.length + 1).replace(/\.svg$/, ''),
+                  contents,
+              }))
+      ))
+  }
+
+  function saveSvgs(files) {
+    return mkdirp(path.dirname(outputPath))
+        .then(() => {
+            var hash = files.reduce((map, file) => {
+                map[file.name] = file.contents
+                return map
+            }, {})
+
+            return writeFile(
+                outputPath,
+                `window.${name} = ${JSON.stringify(hash, null, '  ')};`
+            )
+        })
+  }
+}
+
+SvgConcatenator.DEFAULTS = {
+    name: 'SvgConcat',
+    annotation: true,
+    needsCache: false,
+    minify: {
         collapseWhitespace: true,
         removeAttributeQuotes: true
-    };
-
-    return readTree(this.inputTree)
-        .then(function(foundSrcDir) {
-            srcDir = foundSrcDir;
-        })
-        .then(findSvgFiles)
-        .then(readSvgFiles)
-        .then(createDir)
-        .then(saveSvgs.bind(null, outputFile));
-
-    function findSvgFiles() {
-        return recursiveReaddir(srcDir)
-            .then(function(files) {
-                svgFiles = files.filter(function(file) {
-                    return path.extname(file) === '.svg';
-                });
-            });
     }
+}
 
-    function readSvgFiles() {
-        return Promise.all(svgFiles.map(function(file) {
-            var name = path.relative(srcDir, file).replace(/\.svg$/, '');
-            //TODO: Use read file cache
-            return readFile(file)
-                .then(function(contents) {
-                    svgContents.push({
-                        name: name,
-                        contents: contents.toString()
-                    });
-                });
-        }));
-    }
 
-    function createDir() {
-        return mkdirp(path.dirname(outputFile));
-    }
-
-    function saveSvgs() {
-        var hash = svgContents
-            .sort(function(a, b) {
-                return a.name.localeCompare(b.name);
-            })
-            .reduce(function(hash, item) {
-                hash[item.name] = item.contents;
-                return hash;
-            }, {});
-
-        var contents = 'window.'+name+' = '+JSON.stringify(hash, null, '  ')+';';
-
-        return writeFile(outputFile, contents);
-    }
-};
+module.exports = SvgConcatenator
